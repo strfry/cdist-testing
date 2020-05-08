@@ -1,0 +1,56 @@
+#!/bin/sh
+
+#certbot_fullpath="$(cat "${__object:?}/explorer/certbot-path")"
+
+domain="$(cat ${__object}/parameter/domain)"
+
+authority=letsencrypt
+if [ -f "${__object}/parameter/staging" ]; then
+    authority=letsencrypt-staging
+fi
+
+# Define Authorities in generic section
+__block le-authorities \
+        --file /etc/acme-client.conf --text - << EOF
+authority letsencrypt {
+        api url "https://acme-v02.api.letsencrypt.org/directory"
+        account key "/etc/acme/letsencrypt-privkey.pem"
+}
+
+authority letsencrypt-staging {
+        api url "https://acme-staging-v02.api.letsencrypt.org/directory"
+        account key "/etc/acme/letsencrypt-staging-privkey.pem"
+}
+EOF
+
+require="__block/le-authorities" __block acme-$domain \
+        --file /etc/acme-client.conf \
+        --prefix "#start $domain" \
+        --suffix "#end $domain" \
+        --text - << EOF
+
+domain $domain {
+        domain key "/etc/ssl/private/$domain.key"
+        domain full chain certificate "/etc/ssl/$domain.fullchain.pem"
+        sign with $authority
+}
+EOF
+
+
+if [ -f "${__object}/parameter/automatic-renewal" ]; then
+        renew_hook_param="${__object}/parameter/renew-hook"
+        renew_hook=""
+        if [ -f "${renew_hook_param}" ]; then
+                while read -r hook; do
+                        renew_hook="${renew_hook} && ${hook}"
+                done < "${renew_hook_param}"
+        fi
+
+
+        __cron acme-client  \
+                --user root \
+                --command "acme-client $domain ${renew_hook}" \
+                --hour 0 \
+                --minute 47
+
+fi
